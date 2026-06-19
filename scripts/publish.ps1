@@ -1,117 +1,123 @@
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+Set-Location $ProjectRoot
 
 Write-Host ""
-Write-Host "Nexium Connect Wrapper - GitHub + Discord Publisher" -ForegroundColor Green
-Write-Host "This pushes the public wrapper repo and stores the Discord webhook safely as a GitHub Actions secret." -ForegroundColor DarkGray
+Write-Host "Nexium Wrapper - GitHub + Discord Setup" -ForegroundColor Green
+Write-Host "Repo: buildsbybuchanan/nexium-wrapper" -ForegroundColor DarkGray
 Write-Host ""
 
-function Require-Command($Name, $InstallHint) {
+function Require-Command {
+    param([string]$Name, [string]$InstallHint)
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
-        Write-Host "Missing command: $Name" -ForegroundColor Red
-        Write-Host $InstallHint -ForegroundColor Yellow
-        exit 1
+        throw "Missing command '$Name'. $InstallHint"
     }
 }
 
-function Set-OriginRemote($RepoUrl) {
-    $origin = git remote 2>$null | Select-String -Pattern "^origin$"
-    if ($origin) {
-        git remote set-url origin $RepoUrl
-    }
-    else {
-        git remote add origin $RepoUrl
-    }
+function Run-Native {
+    param([scriptblock]$Command, [string]$FailureMessage)
+    & $Command
+    if ($LASTEXITCODE -ne 0) { throw $FailureMessage }
 }
 
-Require-Command "git" "Install Git: https://git-scm.com/download/win"
-Require-Command "gh" "Install GitHub CLI: winget install --id GitHub.cli"
-Require-Command "node" "Install Node.js LTS: https://nodejs.org/"
+Require-Command "git" "Install Git for Windows first."
+Require-Command "gh" "Run: winget install --id GitHub.cli"
+Require-Command "node" "Install Node.js LTS first."
+Require-Command "npm.cmd" "npm is installed with Node.js."
 
 $DefaultOwner = "buildsbybuchanan"
 $DefaultRepo = "nexium-wrapper"
 
-$RepoOwner = Read-Host "GitHub owner/org [$DefaultOwner]"
+$RepoOwner = Read-Host "GitHub owner [$DefaultOwner]"
 if ([string]::IsNullOrWhiteSpace($RepoOwner)) { $RepoOwner = $DefaultOwner }
 
-$RepoName = Read-Host "Repo name [$DefaultRepo]"
+$RepoName = Read-Host "Repository name [$DefaultRepo]"
 if ([string]::IsNullOrWhiteSpace($RepoName)) { $RepoName = $DefaultRepo }
 
 $FullRepo = "$RepoOwner/$RepoName"
 $RepoUrl = "https://github.com/$FullRepo.git"
 
 Write-Host ""
-Write-Host "Wrapper app URL" -ForegroundColor Cyan
-Write-Host "Paste the live Nexium Connect URL that the desktop wrapper must open." -ForegroundColor DarkGray
-$AppUrl = Read-Host "Nexium Connect URL"
+$AppUrl = Read-Host "Nexium Connect live URL [keep current]"
 if (-not [string]::IsNullOrWhiteSpace($AppUrl)) {
-    $ConfigPath = Join-Path $PSScriptRoot "..\src\config.ts"
+    if ($AppUrl -notmatch '^https://') { throw "Use a full HTTPS URL." }
     $SafeUrl = $AppUrl.Replace('"', '')
-    Set-Content -Path $ConfigPath -Value "export const NEXIUM_CONNECT_URL = `"$SafeUrl`";" -Encoding UTF8
-    Write-Host "Updated src/config.ts -> $SafeUrl" -ForegroundColor Green
-}
-else {
-    Write-Host "No URL entered. Keeping the current wrapper URL." -ForegroundColor Yellow
+    Set-Content -Path (Join-Path $ProjectRoot "src/config.ts") -Value "export const NEXIUM_CONNECT_URL = `"$SafeUrl`";" -Encoding utf8
+    Write-Host "Updated wrapper URL." -ForegroundColor Green
 }
 
 Write-Host ""
-Write-Host "Discord webhook setup" -ForegroundColor Cyan
-Write-Host "Discord path: Channel Settings > Integrations > Webhooks > New Webhook > Copy Webhook URL" -ForegroundColor DarkGray
-$DiscordWebhookSecure = Read-Host "Paste Discord webhook URL (hidden)" -AsSecureString
-$Bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($DiscordWebhookSecure)
+Write-Host "Paste the webhook for the Discord channel that receives GitHub alerts." -ForegroundColor Cyan
+Write-Host "Discord: Channel Settings > Integrations > Webhooks > Copy Webhook URL" -ForegroundColor DarkGray
+$SecureWebhook = Read-Host "Discord webhook URL (hidden)" -AsSecureString
+$Ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureWebhook)
 try {
-    $DiscordWebhookUrl = [Runtime.InteropServices.Marshal]::PtrToStringAuto($Bstr)
+    $DiscordWebhookUrl = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($Ptr)
 }
 finally {
-    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Bstr)
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Ptr)
 }
 
-if ([string]::IsNullOrWhiteSpace($DiscordWebhookUrl)) {
-    throw "Discord webhook URL is required. It will be stored as DISCORD_WEBHOOK_URL in GitHub secrets, not in the repo."
+if ([string]::IsNullOrWhiteSpace($DiscordWebhookUrl) -or $DiscordWebhookUrl -notmatch '^https://(discord.com|discordapp.com)/api/webhooks/') {
+    throw "That does not look like a valid Discord webhook URL."
 }
 
 Write-Host ""
-Write-Host "Checking GitHub login..." -ForegroundColor Cyan
-gh auth status
+Write-Host "Checking GitHub CLI login..." -ForegroundColor Cyan
+Run-Native { gh auth status } "GitHub CLI is not logged in. Run: gh auth login"
 
-Write-Host ""
-Write-Host "Preparing local git repo..." -ForegroundColor Cyan
+Write-Host "Installing dependencies and generating the lock file..." -ForegroundColor Cyan
+Run-Native { & npm.cmd install } "npm install failed."
+Run-Native { & npm.cmd run build } "The local Vite build failed. Nothing was pushed."
+
 if (-not (Test-Path ".git")) {
-    git init
+    Run-Native { git init } "git init failed."
 }
 
-git branch -M main
-Set-OriginRemote $RepoUrl
+Run-Native { git branch -M main } "Could not set the main branch."
 
-Write-Host ""
-Write-Host "Checking GitHub repo: $FullRepo" -ForegroundColor Cyan
-gh repo view $FullRepo *> $null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Repo not found. Creating public repo: $FullRepo" -ForegroundColor Yellow
-    gh repo create $FullRepo --public --source . --remote origin
+$OriginExists = (git remote 2>$null) -contains "origin"
+if ($OriginExists) {
+    Run-Native { git remote set-url origin $RepoUrl } "Could not update the origin remote."
+} else {
+    Run-Native { git remote add origin $RepoUrl } "Could not add the origin remote."
+}
+
+Write-Host "Saving DISCORD_WEBHOOK_URL in GitHub Actions secrets..." -ForegroundColor Cyan
+$DiscordWebhookUrl | gh secret set DISCORD_WEBHOOK_URL --repo $FullRepo
+if ($LASTEXITCODE -ne 0) { throw "Could not save the Discord webhook secret." }
+$DiscordWebhookUrl = $null
+
+Write-Host "Committing files..." -ForegroundColor Cyan
+Run-Native { git add --all } "git add failed."
+
+git diff --cached --quiet
+if ($LASTEXITCODE -eq 0) {
+    Run-Native { git commit --allow-empty -m "Test Nexium wrapper build and Discord alert" } "Could not create the test commit."
+} else {
+    Run-Native { git commit -m "Fix Nexium wrapper build and Discord alerts" } "git commit failed."
+}
+
+Write-Host "Pushing to $FullRepo..." -ForegroundColor Cyan
+Run-Native { git push -u origin main } "Git push failed."
+
+Write-Host "Waiting for the GitHub Actions run..." -ForegroundColor Cyan
+Start-Sleep -Seconds 4
+$RunId = gh run list --repo $FullRepo --workflow "Build Check" --branch main --limit 1 --json databaseId --jq '.[0].databaseId'
+if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($RunId)) {
+    gh run watch $RunId --repo $FullRepo --exit-status
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "The workflow finished with a failure. Open the run shown above for the exact step." -ForegroundColor Red
+        exit 1
+    }
 }
 else {
-    Write-Host "Repo exists. Using existing repo." -ForegroundColor Green
+    Write-Host "Push completed. Check the Actions tab and Discord channel." -ForegroundColor Yellow
 }
-
-Write-Host ""
-Write-Host "Saving Discord webhook as GitHub Actions secret: DISCORD_WEBHOOK_URL" -ForegroundColor Cyan
-$DiscordWebhookUrl | gh secret set DISCORD_WEBHOOK_URL --repo $FullRepo
-
-Write-Host ""
-Write-Host "Committing wrapper files..." -ForegroundColor Cyan
-git add .
-git commit -m "Update Nexium Connect desktop wrapper with Discord alerts" 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "No file changes detected. Creating an empty test commit so Discord can fire." -ForegroundColor Yellow
-    git commit --allow-empty -m "Test Nexium wrapper Discord alert"
-}
-
-Write-Host ""
-Write-Host "Pushing to GitHub..." -ForegroundColor Cyan
-git push -u origin main
 
 Write-Host ""
 Write-Host "DONE" -ForegroundColor Green
-Write-Host "Repo: https://github.com/$FullRepo" -ForegroundColor Green
-Write-Host "Discord alert style: Nexium Connect app name, blue embed, event/status/branch/actor/commit/repo fields." -ForegroundColor Green
-Write-Host "Secret stored only in GitHub Actions: DISCORD_WEBHOOK_URL" -ForegroundColor DarkGray
+Write-Host "GitHub: https://github.com/$FullRepo" -ForegroundColor Green
+Write-Host "Discord notification is sent even when the build fails." -ForegroundColor Green

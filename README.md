@@ -319,3 +319,7 @@ If a secret is ever pasted into a file, remove it before committing. If it was a
 ## License
 
 MIT
+
+### PowerShell note
+
+The included scripts call `npm.cmd` directly instead of `npm`. This avoids a Windows PowerShell conflict where `Set-StrictMode` can break the `npm.ps1` shim with a `MyInvocation.Statement` error.

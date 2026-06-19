@@ -1,3 +1,6 @@
 $ErrorActionPreference = "Stop"
-npm install
-npm run tauri:dev
+Set-Location (Resolve-Path (Join-Path $PSScriptRoot ".."))
+& npm.cmd install
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& npm.cmd run tauri dev
+exit $LASTEXITCODE
