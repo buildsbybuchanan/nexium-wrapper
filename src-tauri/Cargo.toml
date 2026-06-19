@@ -1,0 +1,19 @@
+[package]
+name = "nexium-connect-wrapper"
+version = "1.0.0"
+description = "Desktop wrapper for Nexium Connect"
+authors = ["BuildsByBuchanan"]
+edition = "2021"
+
+[lib]
+name = "nexium_connect_wrapper_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

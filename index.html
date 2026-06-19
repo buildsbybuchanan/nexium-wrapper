@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nexium Connect Wrapper</title>
+  </head>
+  <body>
+    <main id="app">
+      <section class="shell">
+        <div class="badge">Nexium Connect Desktop</div>
+        <h1>Opening Nexium Connect</h1>
+        <p>
+          This desktop wrapper loads the hosted Nexium Connect app in a clean window.
+          Update the app URL in <code>src/config.ts</code> before building your release.
+        </p>
+        <div class="actions">
+          <button id="openApp">Open Nexium Connect</button>
+          <button id="reloadApp">Reload</button>
+        </div>
+        <p class="status" id="status">Ready.</p>
+      </section>
+      <iframe id="nexiumFrame" title="Nexium Connect"></iframe>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
